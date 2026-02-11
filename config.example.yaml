@@ -1,0 +1,64 @@
+# MiniClaw 配置文件示例
+
+# LLM 配置
+llm:
+  # 默认提供商: anthropic | openai
+  provider: anthropic
+
+  # Anthropic 配置
+  anthropic:
+    api_key: ${ANTHROPIC_API_KEY}
+    default_model: claude-3-5-sonnet-20241022
+    base_url: https://api.anthropic.com  # 可选，支持代理
+
+  # OpenAI 配置
+  openai:
+    api_key: ${OPENAI_API_KEY}
+    default_model: gpt-4o
+    base_url: https://api.openai.com  # 可选，支持兼容接口
+
+  # 模型路由（可选）
+  routing:
+    simple: claude-3-5-haiku-20241022
+    normal: claude-3-5-sonnet-20241022
+    complex: claude-3-5-opus-20241022
+
+# Tools 配置
+tools:
+  enabled:
+    - read_file
+    - write_file
+    - bash
+  bash:
+    allowed_commands: ['*']  # 或白名单
+    timeout_seconds: 30
+    working_dir: .
+
+# Skills 配置
+skills:
+  directories:
+    - ./skills
+    - ~/.miniclaw/skills
+  auto_load: true
+
+# 记忆配置（文件系统）
+memory:
+  # Session 级别（短期）
+  session:
+    storage_path: ~/.miniclaw/sessions
+    default_session: default
+    max_turns: 50
+    max_tokens: 8000
+
+  # Agent 级别（长期）
+  agent:
+    workspace_path: ~/.miniclaw/workspace
+    files:
+      - MEMORY.md      # 核心知识库
+      - IDENTITY.md    # AI 身份
+      - USER.md        # 用户画像
+
+# 日志配置
+logging:
+  level: info
+  file: ~/.miniclaw/miniclaw.log

@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+*.tsbuildinfo
+
+# 环境变量
+.env
+.env.local
+
+# 用户配置
+config.yaml
+
+# 测试覆盖率
+coverage/
