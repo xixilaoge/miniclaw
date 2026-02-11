@@ -25,9 +25,11 @@ MiniClaw 是一个极简版的 AI Agent 框架，参考 OpenClaw 的架构设计
 |------|----------|------|
 | **运行时** | Node.js 18+ | LTS 版本 |
 | **语言** | TypeScript | 类型安全 |
-| **LLM 统一接口** | `litellm` | 支持多提供商 |
+| **LLM 统一接口** | `@anthropic-ai/sdk` + `openai` | 原生 SDK，支持流式 + Tool Calling |
 | **CLI 框架** | `commander` | 成熟的 CLI 框架 |
 | **配置格式** | YAML | 人类可读 |
+| **日志** | `pino` + `pino-pretty` | 结构化日志 |
+| **Shell 执行** | `execa` | 安全的子进程执行 |
 | **记忆存储** | 文件系统 | JSON + Markdown |
 
 ---
@@ -42,7 +44,7 @@ MiniClaw 是一个极简版的 AI Agent 框架，参考 OpenClaw 的架构设计
 │  ┌─────────────┐      ┌─────────────────────────────────────┐   │
 │  │   CLI       │─────▶│          Agent Engine               │   │
 │  │  Commander  │      │  ┌─────────────────────────────────┐ │   │
-│  └─────────────┘      │  │  LiteLLM Provider (统一接口)     │ │   │
+│  └─────────────┘      │  │  LLM Provider (Anthropic/OpenAI) │ │   │
 │                       │  └────────────┬────────────────────┘ │   │
 │                       │               │                       │   │
 │                       │  ┌────────────▼────────────────────┐ │   │
@@ -99,8 +101,11 @@ miniclaw/
 │   │   ├── loader.ts             # YAML 配置加载
 │   │   └── types.ts
 │   ├── llm/                      # LLM 抽象层
-│   │   ├── litellm.ts            # LiteLLM 封装
-│   │   └── types.ts
+│   │   ├── types.ts              # 统一类型定义
+│   │   ├── provider.ts           # Provider 抽象接口
+│   │   ├── anthropic.ts          # Anthropic 实现
+│   │   ├── openai.ts             # OpenAI 实现
+│   │   └── index.ts              # 工厂函数
 │   └── index.ts
 ├── skills/                       # 内置技能目录
 │   ├── weather/
@@ -179,8 +184,17 @@ miniclaw dev skill new <name>    # 创建新技能模板
 ```typescript
 interface AgentConfig {
   llm: {
-    provider: 'litellm';
-    defaultModel: string;
+    provider: 'anthropic' | 'openai';
+    anthropic?: {
+      apiKey: string;
+      defaultModel: string;
+      baseUrl?: string;
+    };
+    openai?: {
+      apiKey: string;
+      defaultModel: string;
+      baseUrl?: string;
+    };
     routing?: {
       simple?: string;
       normal?: string;
@@ -204,6 +218,333 @@ interface AgentResponse {
   toolCalls?: ToolCall[];
   usage?: TokenUsage;
 }
+```
+
+### 2.5 LLM 抽象层
+
+**设计目标**：统一 Anthropic 和 OpenAI 的接口，提供一致的调用体验。
+
+**目录结构**：
+
+```
+src/llm/
+├── types.ts          # 统一类型定义
+├── provider.ts       # Provider 抽象接口
+├── anthropic.ts      # Anthropic SDK 封装
+├── openai.ts         # OpenAI SDK 封装
+└── index.ts          # 工厂函数
+```
+
+**统一类型定义**：
+
+```typescript
+// src/llm/types.ts
+
+export type MessageRole = 'user' | 'assistant' | 'system';
+
+export interface TextContent {
+  type: 'text';
+  text: string;
+}
+
+export interface ToolUseContent {
+  type: 'tool_use';
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+export interface ToolResultContent {
+  type: 'tool_result';
+  tool_use_id: string;
+  content: string;
+}
+
+export type ContentBlock = TextContent | ToolUseContent | ToolResultContent;
+
+export interface Message {
+  role: MessageRole;
+  content: string | ContentBlock[];
+}
+
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+}
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+export interface Chunk {
+  type: 'text' | 'tool_use' | 'done';
+  content?: string;
+  toolCall?: ToolCall;
+  usage?: TokenUsage;
+}
+
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface ChatResponse {
+  content: string;
+  toolCalls?: ToolCall[];
+  usage?: TokenUsage;
+}
+
+export interface ChatParams {
+  messages: Message[];
+  tools?: ToolDefinition[];
+  model?: string;
+  maxTokens?: number;
+  temperature?: number;
+  system?: string;
+}
+```
+
+**Provider 抽象接口**：
+
+```typescript
+// src/llm/provider.ts
+
+export interface LLMProvider {
+  /**
+   * 流式对话
+   */
+  chat(params: ChatParams): AsyncGenerator<Chunk>;
+
+  /**
+   * 非流式对话（完整响应）
+   */
+  chatComplete(params: ChatParams): Promise<ChatResponse>;
+
+  /**
+   * 获取支持的模型列表
+   */
+  getModels(): string[];
+}
+```
+
+**Anthropic 实现**：
+
+```typescript
+// src/llm/anthropic.ts
+
+import Anthropic from '@anthropic-ai/sdk';
+import type { LLMProvider, ChatParams, Chunk, ChatResponse } from './types.js';
+
+export interface AnthropicConfig {
+  apiKey: string;
+  baseUrl?: string;
+  defaultModel: string;
+}
+
+export class AnthropicProvider implements LLMProvider {
+  private client: Anthropic;
+  private defaultModel: string;
+
+  constructor(config: AnthropicConfig) {
+    this.client = new Anthropic({
+      apiKey: config.apiKey,
+      baseURL: config.baseUrl,
+    });
+    this.defaultModel = config.defaultModel;
+  }
+
+  async *chat(params: ChatParams): AsyncGenerator<Chunk> {
+    const stream = await this.client.messages.create({
+      model: params.model || this.defaultModel,
+      messages: this.convertMessages(params.messages),
+      tools: this.convertTools(params.tools),
+      system: params.system,
+      max_tokens: params.maxTokens || 4096,
+      temperature: params.temperature,
+      stream: true,
+    });
+
+    for await (const event of stream) {
+      switch (event.type) {
+        case 'text_block':
+        case 'content_block_delta':
+          yield { type: 'text', content: event.delta?.text };
+          break;
+        case 'content_block_stop':
+          // 工具调用完成
+          break;
+        case 'message_stop':
+          yield { type: 'done' };
+          break;
+        case 'message_stream':
+          if (event.message?.usage) {
+            yield {
+              type: 'done',
+              usage: {
+                inputTokens: event.message.usage.input_tokens,
+                outputTokens: event.message.usage.output_tokens,
+                totalTokens: event.message.usage.input_tokens + event.message.usage.output_tokens,
+              },
+            };
+          }
+          break;
+      }
+    }
+  }
+
+  async chatComplete(params: ChatParams): Promise<ChatResponse> {
+    const response = await this.client.messages.create({
+      model: params.model || this.defaultModel,
+      messages: this.convertMessages(params.messages),
+      tools: this.convertTools(params.tools),
+      system: params.system,
+      max_tokens: params.maxTokens || 4096,
+      temperature: params.temperature,
+    });
+
+    return this.convertResponse(response);
+  }
+
+  getModels(): string[] {
+    return [
+      'claude-3-5-sonnet-20241022',
+      'claude-3-5-haiku-20241022',
+      'claude-3-5-opus-20241022',
+    ];
+  }
+
+  // 私有方法：消息格式转换
+  private convertMessages(messages: Message[]) { /* ... */ }
+  private convertTools(tools?: ToolDefinition[]) { /* ... */ }
+  private convertResponse(response: any): ChatResponse { /* ... */ }
+}
+```
+
+**OpenAI 实现**：
+
+```typescript
+// src/llm/openai.ts
+
+import OpenAI from 'openai';
+import type { LLMProvider, ChatParams, Chunk, ChatResponse } from './types.js';
+
+export interface OpenAIConfig {
+  apiKey: string;
+  baseUrl?: string;
+  defaultModel: string;
+}
+
+export class OpenAIProvider implements LLMProvider {
+  private client: OpenAI;
+  private defaultModel: string;
+
+  constructor(config: OpenAIConfig) {
+    this.client = new OpenAI({
+      apiKey: config.apiKey,
+      baseURL: config.baseUrl,
+    });
+    this.defaultModel = config.defaultModel;
+  }
+
+  async *chat(params: ChatParams): AsyncGenerator<Chunk> {
+    const stream = await this.client.chat.completions.create({
+      model: params.model || this.defaultModel,
+      messages: this.convertMessages(params.messages),
+      tools: this.convertTools(params.tools),
+      system: params.system,
+      max_tokens: params.maxTokens,
+      temperature: params.temperature,
+      stream: true,
+    });
+
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta;
+      if (delta?.content) {
+        yield { type: 'text', content: delta.content };
+      }
+      if (chunk.choices[0]?.finish_reason === 'stop') {
+        yield { type: 'done' };
+      }
+    }
+  }
+
+  async chatComplete(params: ChatParams): Promise<ChatResponse> {
+    const response = await this.client.chat.completions.create({
+      model: params.model || this.defaultModel,
+      messages: this.convertMessages(params.messages),
+      tools: this.convertTools(params.tools),
+      system: params.system,
+      max_tokens: params.maxTokens,
+      temperature: params.temperature,
+    });
+
+    return this.convertResponse(response);
+  }
+
+  getModels(): string[] {
+    return [
+      'gpt-4o',
+      'gpt-4o-mini',
+      'gpt-4-turbo',
+    ];
+  }
+
+  // 私有方法：消息格式转换
+  private convertMessages(messages: Message[]) { /* ... */ }
+  private convertTools(tools?: ToolDefinition[]) { /* ... */ }
+  private convertResponse(response: any): ChatResponse { /* ... */ }
+}
+```
+
+**工厂函数**：
+
+```typescript
+// src/llm/index.ts
+
+import type { LLMProvider } from './provider.js';
+import { AnthropicProvider } from './anthropic.js';
+import { OpenAIProvider } from './openai.js';
+
+export interface LLMConfig {
+  provider: 'anthropic' | 'openai';
+  anthropic?: {
+    apiKey: string;
+    defaultModel: string;
+    baseUrl?: string;
+  };
+  openai?: {
+    apiKey: string;
+    defaultModel: string;
+    baseUrl?: string;
+  };
+}
+
+export function createLLMProvider(config: LLMConfig): LLMProvider {
+  switch (config.provider) {
+    case 'anthropic':
+      if (!config.anthropic?.apiKey) {
+        throw new Error('Anthropic API key is required');
+      }
+      return new AnthropicProvider(config.anthropic);
+
+    case 'openai':
+      if (!config.openai?.apiKey) {
+        throw new Error('OpenAI API key is required');
+      }
+      return new OpenAIProvider(config.openai);
+
+    default:
+      throw new Error(`Unknown provider: ${config.provider}`);
+  }
+}
+
+// 导出所有类型
+export * from './types.js';
+export * from './provider.js';
 ```
 
 ### 3. Tools - 基础工具集
@@ -357,7 +698,7 @@ interface SkillRegistry {
 
 ### 2026-02-11: MiniClaw 项目启动
 - 决定使用文件系统作为记忆存储
-- 选择 litellm 作为 LLM 统一接口
+- 选择 Anthropic + OpenAI 原生 SDK，而非 LiteLLM
 - 技术栈：Node.js + TypeScript
 ```
 
@@ -443,13 +784,26 @@ interface AgentStore {
 
 # LLM 配置
 llm:
-  provider: litellm
-  default_model: claude/claude-3-5-sonnet-20241022
-  # 模型路由策略（可选）
+  # 默认提供商: anthropic | openai
+  provider: anthropic
+
+  # Anthropic 配置
+  anthropic:
+    api_key: ${ANTHROPIC_API_KEY}
+    default_model: claude-3-5-sonnet-20241022
+    base_url: https://api.anthropic.com  # 可选，支持代理
+
+  # OpenAI 配置
+  openai:
+    api_key: ${OPENAI_API_KEY}
+    default_model: gpt-4o
+    base_url: https://api.openai.com  # 可选，支持兼容接口
+
+  # 模型路由（可选）
   routing:
-    simple: claude/claude-3-haiku-20240307
-    normal: claude/claude-3-5-sonnet-20241022
-    complex: claude/claude-3-5-opus-20241022
+    simple: claude-3-5-haiku-20241022
+    normal: claude-3-5-sonnet-20241022
+    complex: claude-3-5-opus-20241022
 
 # Tools 配置
 tools:
@@ -499,16 +853,21 @@ logging:
 ```json
 {
   "dependencies": {
-    "litellm": "^1.x",
+    "@anthropic-ai/sdk": "^0.32.x",
+    "openai": "^4.x",
     "commander": "^12.x",
     "js-yaml": "^4.x",
     "chalk": "^5.x",
-    "ora": "^8.x",
+    "execa": "^9.x",
+    "pino": "^9.x",
+    "pino-pretty": "^13.x",
     "inquirer": "^10.x",
     "glob": "^11.x"
   },
   "devDependencies": {
     "@types/node": "^20.x",
+    "@types/js-yaml": "^4.x",
+    "@types/inquirer": "^9.x",
     "typescript": "^5.x",
     "tsx": "^4.x",
     "vitest": "^2.x"
@@ -555,5 +914,6 @@ logging:
 ## 参考
 
 - [OpenClaw](https://github.com/openclaw/openclaw) - 原始架构参考
-- [LiteLLM](https://github.com/BerriAI/litellm) - 统一 LLM 接口
+- [Anthropic TypeScript SDK](https://github.com/anthropics/anthropic-sdk-typescript) - 官方 TypeScript SDK
+- [OpenAI Node.js Library](https://github.com/openai/openai-node) - 官方 Node.js SDK
 - [MCP Protocol](https://modelcontextprotocol.io/) - 模型上下文协议
