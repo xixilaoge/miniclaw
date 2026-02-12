@@ -27,7 +27,7 @@ interface ToolRegistry {
   execute(name: string, params: unknown): Promise<unknown>;
 }
 
-class ToolRegistryImpl implements ToolRegistry {
+export class ToolRegistryImpl implements ToolRegistry {
   private tools = new Map<string, Tool>();
 
   register(tool: Tool): void {
