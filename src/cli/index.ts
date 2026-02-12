@@ -3,96 +3,81 @@
  */
 
 import { Command } from 'commander';
-import { createLLMProvider } from '../llm/index.js';
 import { loadConfig, createDefaultConfig } from '../config/index.js';
-import { toolRegistry } from '../tools/index.js';
+import { createAgent } from '../agent/index.js';
+import { askCommand } from './commands/ask.js';
+import { chatCommand } from './commands/chat.js';
+import { skillCommand } from './commands/skill.js';
+import { memoryCommand } from './commands/memory.js';
 import logger from '../logger/index.js';
+import type { MiniClawConfig } from '../config/loader.js';
+import type { AgentConfig } from '../agent/types.js';
 
 const program = new Command();
 
 program
   .name('miniclaw')
   .description('极简 AI Agent 框架')
-  .version('0.1.0');
+  .version('0.1.0')
+  .option('-c, --config <path>', '配置文件路径');
 
-// ask 命令 - 单次提问
+// 注册子命令
 program
-  .command('ask')
-  .description('单次提问')
-  .argument('<question>', '问题')
-  .option('-c, --config <path>', '配置文件路径')
-  .option('-m, --model <model>', '指定模型')
-  .action(async (question: string, options) => {
-    try {
-      const config = loadConfig(options.config);
-
-      const provider = createLLMProvider({
-        provider: config.llm.provider,
-        anthropic: config.llm.anthropic
-          ? {
-              apiKey: config.llm.anthropic.api_key,
-              defaultModel: config.llm.anthropic.default_model,
-              baseUrl: config.llm.anthropic.base_url,
-            }
-          : undefined,
-        openai: config.llm.openai
-          ? {
-              apiKey: config.llm.openai.api_key,
-              defaultModel: config.llm.openai.default_model,
-              baseUrl: config.llm.openai.base_url,
-            }
-          : undefined,
-      });
-
-      const tools = toolRegistry.list();
-
-      const response = await provider.chatComplete({
-        messages: [{ role: 'user', content: question }],
-        tools,
-        model: options.model,
-      });
-
-      console.log(response.content);
-    } catch (error) {
-      logger.error(error);
-      process.exit(1);
-    }
+  .command('init')
+  .description('初始化配置文件')
+  .action(() => {
+    createDefaultConfig();
   });
 
-// config 命令 - 配置管理
-program
-  .command('config')
-  .description('配置管理')
-  .argument('<action>', '操作: init')
-  .action((action: string) => {
-    switch (action) {
-      case 'init':
-        createDefaultConfig();
-        break;
-      default:
-        console.error(`Unknown action: ${action}`);
-        process.exit(1);
-    }
-  });
+/**
+ * 转换配置类型 (MiniClawConfig -> AgentConfig)
+ */
+function convertConfig(config: MiniClawConfig): AgentConfig {
+  return {
+    llm: {
+      provider: config.llm.provider,
+      anthropic: config.llm.anthropic ? {
+        apiKey: config.llm.anthropic.api_key,
+        defaultModel: config.llm.anthropic.default_model,
+        baseUrl: config.llm.anthropic.base_url,
+      } : undefined,
+      openai: config.llm.openai ? {
+        apiKey: config.llm.openai.api_key,
+        defaultModel: config.llm.openai.default_model,
+        baseUrl: config.llm.openai.base_url,
+      } : undefined,
+      routing: config.llm.routing,
+    },
+    tools: config.tools,
+    skills: config.skills,
+    memory: {
+      session: {
+        storage_path: '/tmp/miniclaw/sessions',
+        default_session: 'default',
+        max_turns: 100,
+        max_tokens: 100000,
+      },
+      agent: {
+        workspace_path: '/tmp/miniclaw/workspace',
+        files: ['MEMORY.md', 'IDENTITY.md', 'USER.md'],
+      },
+    },
+  };
+}
 
-// tool 命令 - 工具管理
-program
-  .command('tool')
-  .description('工具管理')
-  .argument('<action>', '操作: list')
-  .action((action: string) => {
-    switch (action) {
-      case 'list':
-        const tools = toolRegistry.list();
-        console.log('Available tools:');
-        for (const tool of tools) {
-          console.log(`  - ${tool.name}: ${tool.description}`);
-        }
-        break;
-      default:
-        console.error(`Unknown action: ${action}`);
-        process.exit(1);
-    }
-  });
+// 获取配置并创建 agent
+function getAgent(): ReturnType<typeof createAgent> {
+  const options = program.opts();
+  const miniClawConfig = loadConfig(options.config);
+  const agentConfig = convertConfig(miniClawConfig);
+  return createAgent(agentConfig);
+}
+
+// 注册主命令
+const agent = getAgent();
+askCommand(program, agent);
+chatCommand(program, agent);
+skillCommand(program, agent);
+memoryCommand(program, agent);
 
 program.parse();

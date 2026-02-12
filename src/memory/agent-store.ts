@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import logger from '../logger/index.js';
-import type { AgentMemoryFile, AgentStore } from './types.js';
+import type { AgentStore, MemoryMatch } from './types.js';
 
 /**
  * 获取记忆文件路径
@@ -51,7 +51,7 @@ export class AgentStoreImpl implements AgentStore {
   /**
    * 写入记忆文件
    */
-  private writeFile(filename: string, content: string): Promise<void> {
+  private async writeFile(filename: string, content: string): Promise<void> {
     const filePath = getMemoryFilePath(this.workspacePath, filename);
     const dir = path.dirname(filePath);
 
@@ -61,6 +61,7 @@ export class AgentStoreImpl implements AgentStore {
 
     fs.writeFileSync(filePath, content, 'utf-8');
     logger.debug({ file: filename }, 'Memory file written');
+    return Promise.resolve();
   }
 
   async writeMemory(content: string): Promise<void> {
@@ -88,8 +89,8 @@ export class AgentStoreImpl implements AgentStore {
   /**
    * 搜索记忆内容
    */
-  async search(query: string): Promise<AgentMemoryFile[]> {
-    const results: AgentMemoryFile[] = [];
+  async search(query: string): Promise<MemoryMatch[]> {
+    const results: MemoryMatch[] = [];
     const files = ['MEMORY.md', 'IDENTITY.md', 'USER.md'];
 
     for (const file of files) {

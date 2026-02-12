@@ -34,11 +34,12 @@ export interface SessionStore {
   create(sessionId?: string): Promise<SessionData>;
 }
 
-export interface AgentMemoryFile {
-  name: string;
-  path: string;
-  content: string;
-}
+// 注意: AgentMemoryFile 接口不再使用，保留用于向后兼容
+// export interface AgentMemoryFile {
+//   name: string;
+//   path: string;
+//   content: string;
+// }
 
 export interface AgentStore {
   readMemory(): Promise<string>;

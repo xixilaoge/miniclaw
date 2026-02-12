@@ -153,3 +153,11 @@ export class SkillLoaderImpl implements SkillLoader {
     return skills;
   }
 }
+
+/**
+ * 创建技能加载器实例
+ */
+export function createSkillLoader(): SkillLoader {
+  return new SkillLoaderImpl();
+}
+

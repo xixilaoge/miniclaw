@@ -152,11 +152,14 @@ export class AgentImpl implements Agent {
    * 保存消息到会话
    */
   private async saveMessages(sessionId: string, userMessages: Message[], response: ChatResponse): Promise<void> {
+    // 只保存用户和助手消息，不保存 system 消息
     for (const msg of userMessages) {
-      await this.sessionStore.addMessage(sessionId, {
-        role: msg.role,
-        content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
-      });
+      if (msg.role === 'user' || msg.role === 'assistant') {
+        await this.sessionStore.addMessage(sessionId, {
+          role: msg.role,
+          content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+        });
+      }
     }
 
     await this.sessionStore.addMessage(sessionId, {
