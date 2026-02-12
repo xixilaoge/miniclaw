@@ -9,6 +9,7 @@ import { askCommand } from './commands/ask.js';
 import { chatCommand } from './commands/chat.js';
 import { skillCommand } from './commands/skill.js';
 import { memoryCommand } from './commands/memory.js';
+import { devCommand } from './commands/dev.js';
 import logger from '../logger/index.js';
 import type { MiniClawConfig } from '../config/loader.js';
 import type { AgentConfig } from '../agent/types.js';
@@ -79,5 +80,6 @@ askCommand(program, agent);
 chatCommand(program, agent);
 skillCommand(program, agent);
 memoryCommand(program, agent);
+devCommand(program, agent);
 
 program.parse();

@@ -13,6 +13,37 @@ export interface SkillOptions {
 }
 
 /**
+ * 显示技能详情
+ */
+export async function showSkill(name: string): Promise<string> {
+  const loader = createSkillLoader();
+  const skill = await loader.loadFromFile(`./skills/${name}/SKILL.md`);
+
+  if (!skill) {
+    throw new Error(`Skill not found: ${name}`);
+  }
+
+  const lines: string[] = [];
+  const emoji = skill.emoji || '📦';
+
+  lines.push(`\n${emoji} ${skill.name}`);
+  lines.push('='.repeat(40));
+  lines.push(`\n描述: ${skill.description}`);
+
+  if (skill.requires?.bins && skill.requires.bins.length > 0) {
+    lines.push(`\n依赖命令: ${skill.requires.bins.join(', ')}`);
+  }
+
+  if (skill.requires?.env && skill.requires.env.length > 0) {
+    lines.push(`\n环境变量: ${skill.requires.env.join(', ')}`);
+  }
+
+  lines.push(`\n${skill.content}`);
+
+  return lines.join('\n');
+}
+
+/**
  * 注册 skill 命令
  */
 export function skillCommand(program: Command, _agent: Agent): void {
@@ -34,6 +65,19 @@ export function skillCommand(program: Command, _agent: Agent): void {
         }
       } catch (error) {
         logger.error({ error }, 'Failed to load skills');
+        process.exit(1);
+      }
+    });
+
+  skillCmd
+    .command('show <name>')
+    .description('查看技能详情')
+    .action(async (name: string) => {
+      try {
+        const output = await showSkill(name);
+        console.log(output);
+      } catch (error) {
+        logger.error({ error }, 'Failed to show skill');
         process.exit(1);
       }
     });
