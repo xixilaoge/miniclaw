@@ -4,6 +4,7 @@
  */
 
 import fs from 'node:fs';
+import path from 'node:path';
 import yaml from 'js-yaml';
 import logger from '../logger/index.js';
 import type { Skill, SkillFrontmatter, SkillLoader } from './types.js';
@@ -99,6 +100,10 @@ export class SkillLoaderImpl implements SkillLoader {
    * 从单个文件加载技能
    */
   async loadFromFile(filePath: string): Promise<Skill> {
+    // 调试日志
+    const absolutePath = path.resolve(filePath);
+    logger.debug({ filePath, absolutePath, exists: fs.existsSync(filePath) }, 'Loading skill file');
+
     if (!fs.existsSync(filePath)) {
       throw new Error(`Skill file not found: ${filePath}`);
     }
