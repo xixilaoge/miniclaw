@@ -13,3 +13,6 @@ config.yaml
 
 # 测试覆盖率
 coverage/
+
+# git worktree
+./worktree
